@@ -18,6 +18,23 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import datetime, time
 import os
 
+# ========== КОНФИГУРАЦИЯ ПУТЕЙ ==========
+import os
+
+# Основной путь для хранения данных (куда подключен volume)
+VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
+
+# Путь к базе данных ВНУТРИ volume
+DB_PATH = os.path.join(VOLUME_PATH, 'voting.db')
+
+# Путь для экспорта файлов JSON ВНУТРИ volume
+JSON_EXPORT_PATH = os.path.join(VOLUME_PATH, 'exports')
+os.makedirs(JSON_EXPORT_PATH, exist_ok=True)
+
+# Все остальные настройки (токен, ID каналов и т.д.) оставьте как есть
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+
 print("=== DEBUG ENV ===")
 print(f"BOT_TOKEN length: {len(os.getenv('BOT_TOKEN', 'NOT_FOUND'))}")
 print(f"All keys: {list(os.environ.keys())}")
@@ -42,9 +59,9 @@ CHANNEL_USERNAME_2 = os.getenv("CHANNEL_USERNAME_2", "@genesis_bryansk")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1388134102"))
 
 # Пути для Railway
-BASE_DIR = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", ".")
-DB_PATH = os.path.join(BASE_DIR, 'voting.db')
-JSON_EXPORT_PATH = os.path.join(BASE_DIR, 'exports')
+#BASE_DIR = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", ".")
+#DB_PATH = os.path.join(BASE_DIR, 'voting.db')
+#JSON_EXPORT_PATH = os.path.join(BASE_DIR, 'exports')
 
 os.makedirs(JSON_EXPORT_PATH, exist_ok=True)
 
