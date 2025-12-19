@@ -140,9 +140,12 @@ NOMINATIONS = [
      "desc": "Брянский фестиваль, праздник или форум, который привлек вас и весь город, оставив после себя море эмоций и воспоминаний"},
     {"id": "person", "title": "8. Личность года", 
      "desc": "Политик, художник, активист или предприниматель, чьи идеи и энергия меняют Брянск к лучшему и вдохновляют вас и других"},
-    {"id": "responsible_business", "title": "9. Ответственный бизнес", 
-     "desc": "Брянские компании и сообщества, которые вкладывают душу в город: помогают, развивают, заботятся и делают жизнь вокруг ярче"}
+    {"id": "responsible_business", "title": "9. Сообщество года", 
+     "desc": "Брянские сообщества, которые вкладывают душу в город: помогают, развивают, заботятся и делают жизнь вокруг ярче"},
+     {"id": "responsible_business", "title": "10. Инициатива года", 
+     "desc": "Соседский субботник, локальный флешмоб, предложение властей или экологический проект – нечто, что объединяет людей и делает Брянск лучше"}
 ]
+
 
 # ========== FSM ==========
 class VotingStates(StatesGroup):
@@ -204,7 +207,7 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
         conn.close()
         
         await message.answer(
-            "🎉 Спасибо за ответы! Результаты будут в каналах позже!\n\n"
+            "🎉 Спасибо за ответы! Результаты будут в каналах позже. Следите за постами!\n\n"
             "<i>Вы также можете изменить свои ответы с помощью <code>/revote</code></i>",
         parse_mode="HTML"
     )
@@ -225,40 +228,80 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
 
 # ========== ХЕНДЛЕРЫ ==========
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
+async def cmd_start(message: types.Message):
     user_id = message.from_user.id
+    await delete_old_messages(user_id)
     
-    conn = get_db_connection()
-    conn.execute('''
-        INSERT OR REPLACE INTO users (user_id, username, first_name, last_active)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ''', (user_id, message.from_user.username, message.from_user.first_name))
+    # Текст акции
+    start_text = (
+        "🎉 <b>Акция «Люди любят»</b>\n\n"
+        "Это открытая премия, в которой вы, как и любой другой житель Брянска, "
+        "можете предложить номинантов: место, инициативу или человека, "
+        "которыми вы искренне гордитесь или хотите поддержать\n\n"
+        "Идея премии — заметить тех, кого любят люди, и поддержать локальные "
+        "бизнесы, сообщества, личности\n\n"
+        "Если вы готовы, то давайте начнем!"
+    )
     
-    cursor = conn.execute('SELECT is_finished FROM users WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    conn.close()
+    # Создаём клавиатуру с двумя кнопками
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📖 Механика акции", callback_data="mechanics"),
+        InlineKeyboardButton(text="✏️ Предложить номинантов", callback_data="start_voting")
+    )
     
-    if row and row[0]:
-        await message.answer("✅ Вы уже заполнили анкету!")
-        return
-
+    msg = await message.answer(start_text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    save_message_id(user_id, msg.message_id, msg.chat.id)
+    
+@dp.callback_query(F.data == "mechanics")
+async def show_mechanics(callback: types.CallbackQuery):
+    await callback.answer()
+    user_id = callback.from_user.id
+    await delete_old_messages(user_id)
+    
+    mechanics_text = (
+        "🔧 <b>Механика акции</b>\n\n"
+        "1. <b>Сбор заявок</b>\n"
+        "Через этого бота жители Брянска предлагают своих номинантов в заданных номинациях\n\n"
+        "2. <b>Формирование лонг-листа</b>\n"
+        "Мы получаем ваши ответы и собираем полный перечень всех предложенных мест и людей\n\n"
+        "3. <b>Формирование шорт-листа</b>\n"
+        "Экспертная группа формирует список финалистов – люди, места и события, "
+        "которые чаще всего указывали люди\n\n"
+        "4. <b>Народное голосование</b>\n"
+        "Финальное голосование, где вы сможете выбрать победителей в каждой из номинаций, "
+        "также будет проходить через бот, чтобы у всех была возможность поддержать фаворитов\n\n"
+        "5. <b>Итоговый ивент</b>\n"
+        "В конце акции мы проведем награждение: позовем жителей Брянска, "
+        "пригласим номинантов и наградим победителей"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start"))
+    
+    msg = await callback.message.answer(mechanics_text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    save_message_id(user_id, msg.message_id, msg.chat.id)
+    
+@dp.callback_query(F.data == "start_voting")
+async def start_voting_process(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    user_id = callback.from_user.id
+    
+    # Удаляем старые сообщения
     await delete_old_messages(user_id)
     
     # ПРОВЕРКА ПОДПИСКИ НА ДВЕ ГРУППЫ
     if not await check_subscription(user_id):
         builder = InlineKeyboardBuilder()
         builder.add(
-            InlineKeyboardButton(text="📢 1-й канал", 
-                               url=f"https://t.me/new_people32"),
-            InlineKeyboardButton(text="📢 2-й канал", 
-                               url=f"https://t.me/genesis_bryansk")
+            InlineKeyboardButton(text="📢 1-й канал", url=f"https://t.me/new_people32"),
+            InlineKeyboardButton(text="📢 2-й канал", url=f"https://t.me/genesis_bryansk")
         )
         builder.add(InlineKeyboardButton(text="✅ Подписался на оба", callback_data="check_sub"))
-        builder.adjust(2, 1)  # 1-я строка: 2 кнопки, 2-я: 1 кнопка
+        builder.adjust(2, 1)  # ← ВАЖНО: эта строка должна быть ВНУТРИ блока if
         
-        msg = await message.answer(
-            f"👋 Привет, {message.from_user.first_name}!\n\n"
-            f"❗️ Подпишись на <b>ОБА канала</b>:\n"
+        msg = await callback.message.answer(
+            f"❗️ Для участия подпишись на <b>оба канала</b>:\n"
             f"• @new_people32\n"
             f"• @genesis_bryansk\n\n"
             f"После подписки нажми кнопку ⬇️",
@@ -266,16 +309,42 @@ async def cmd_start(message: types.Message, state: FSMContext):
             parse_mode="HTML"
         )
         save_message_id(user_id, msg.message_id, msg.chat.id)
-        await state.set_state(VotingStates.checking_subscription)
-        return
+        await state.set_state(VotingStates.checking_subscription)  # ← Эта строка тоже ВНУТРИ if
+        return  # ← Этот return ВНУТРИ if
     
-    # ЕСЛИ ПОДПИСАН НА ОБА — НАЧИНАЕМ ГОЛОСОВАНИЕ
+    # Если подписан на оба - начинаем голосование (этот блок с ОТДЕЛЬНЫМ отступом)
     conn = get_db_connection()
     cursor = conn.execute('SELECT COUNT(*) FROM votes WHERE user_id = ?', (user_id,))
     answered_count = cursor.fetchone()[0]
     conn.close()
     
-    await ask_next_nomination(message, state, user_id, answered_count)
+    await ask_next_nomination(callback.message, state, user_id, answered_count)
+    
+@dp.callback_query(F.data == "back_to_start")
+async def back_to_start(callback: types.CallbackQuery):
+    await callback.answer()
+    user_id = callback.from_user.id
+    await delete_old_messages(user_id)
+    
+    # Повторно используем текст из cmd_start
+    start_text = (
+        "🎉 <b>Акция «Люди любят»</b>\n\n"
+        "Это открытая премия, в которой вы, как и любой другой житель Брянска, "
+        "можете предложить номинантов: место, инициативу или человека, "
+        "которыми вы искренне гордитесь или хотите поддержать\n\n"
+        "Идея премии — заметить тех, кого любят люди, и поддержать локальные "
+        "бизнесы, сообщества, личности\n\n"
+        "Если вы готовы, то давайте начнем!"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📖 Механика акции", callback_data="mechanics"),
+        InlineKeyboardButton(text="✏️ Предложить номинантов", callback_data="start_voting")
+    )
+    
+    msg = await callback.message.answer(start_text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    save_message_id(user_id, msg.message_id, msg.chat.id)
 
 
 @dp.callback_query(F.data == "check_sub", VotingStates.checking_subscription)
@@ -285,7 +354,7 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("✅ Спасибо!")
         await ask_next_nomination(callback.message, state, callback.from_user.id, 0)
     else:
-        await callback.answer("❌ Подпишись на канал!", show_alert=True)
+        await callback.answer("❌ Подпишитесь на канал!", show_alert=True)
 
 @dp.message(VotingStates.voting_process, F.text)
 async def handle_vote_text(message: types.Message, state: FSMContext):
