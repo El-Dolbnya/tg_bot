@@ -417,7 +417,7 @@ async def admin_results(message: types.Message):
             FROM votes 
             WHERE nomination_id = ? AND answer_text != 'ПРОПУЩЕНО'
             GROUP BY LOWER(TRIM(answer_text)) 
-            ORDER BY cnt DESC LIMIT 15
+            ORDER BY cnt DESC LIMIT 150
         ''', (nom['id'],))
         
         rows = cursor.fetchall()
