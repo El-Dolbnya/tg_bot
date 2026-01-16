@@ -142,10 +142,9 @@ NOMINATIONS = [
      "desc": "Политик, художник, активист или предприниматель, чьи идеи и энергия меняют Брянск к лучшему и вдохновляют вас и других"},
     {"id": "responsible_business", "title": "9. Сообщество года", 
      "desc": "Брянские сообщества, которые вкладывают душу в город: помогают, развивают, заботятся и делают жизнь вокруг ярче"},
-     {"id": "responsible_business", "title": "10. Инициатива года", 
+    {"id": "initiative_year", "title": "10. Инициатива года", 
      "desc": "Соседский субботник, локальный флешмоб, предложение властей или экологический проект – нечто, что объединяет людей и делает Брянск лучше"}
 ]
-
 
 # ========== FSM ==========
 class VotingStates(StatesGroup):
@@ -198,7 +197,6 @@ async def check_subscription(user_id: int) -> bool:
             return False
     return True  # Подписан на все каналы
 
-
 async def ask_next_nomination(message: types.Message, state: FSMContext, user_id: int, current_index: int):
     if current_index >= len(NOMINATIONS):
         conn = get_db_connection()
@@ -210,7 +208,7 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
             "🎉 Спасибо за ответы! Результаты будут в каналах позже. Следите за постами!\n\n"
             "<i>Вы также можете изменить свои ответы с помощью <code>/revote</code></i>",
         parse_mode="HTML"
-    )
+        )
         await state.set_state(VotingStates.finished)
         return
 
@@ -225,6 +223,87 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
     
     await state.update_data(current_index=current_index)
     await state.set_state(VotingStates.voting_process)
+
+async def show_results_page(chat_id: int, page: int = 0, edit_message_id: int = None):
+    """Показывает страницу с результатами для одной номинации"""
+    if page < 0 or page >= len(NOMINATIONS):
+        return
+    
+    nomination = NOMINATIONS[page]
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    text = f"📊 <b>ТОП ОТВЕТОВ</b>\n\n🔸 <b>{nomination['title']}</b>\n"
+    
+    cursor.execute('''
+        SELECT answer_text, COUNT(*) as cnt 
+        FROM votes 
+        WHERE nomination_id = ? AND answer_text != 'ПРОПУЩЕНО'
+        GROUP BY LOWER(TRIM(answer_text)) 
+        ORDER BY cnt DESC LIMIT 150
+    ''', (nomination['id'],))
+    
+    rows = cursor.fetchall()
+    if rows:
+        for ans, cnt in rows:
+            text += f"▫️ {ans}: {cnt}\n"
+    else:
+        text += "📭 Пока нет ответов\n"
+    
+    conn.close()
+    
+    # Добавляем информацию о странице
+    text += f"\n📑 Страница {page + 1} из {len(NOMINATIONS)}"
+    
+    # Создаем клавиатуру с кнопками навигации
+    builder = InlineKeyboardBuilder()
+    
+    # Кнопка "Назад" - показываем только если не первая страница
+    if page > 0:
+        builder.add(InlineKeyboardButton(
+            text="◀️ Назад", 
+            callback_data=f"results_page:{page - 1}"
+        ))
+    
+    # Кнопка "Вперед" - показываем только если не последняя страница
+    if page < len(NOMINATIONS) - 1:
+        builder.add(InlineKeyboardButton(
+            text="Вперед ▶️", 
+            callback_data=f"results_page:{page + 1}"
+        ))
+    
+    builder.adjust(2)  # Две кнопки в один ряд
+    
+    # Если указан message_id для редактирования - редактируем, иначе отправляем новое
+    if edit_message_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                text=text,
+                reply_markup=builder.as_markup(),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            # Если не удалось отредактировать (например, сообщение устарело), отправляем новое
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=builder.as_markup(),
+                parse_mode="HTML"
+            )
+            # Сохраняем ID нового сообщения
+            save_message_id(ADMIN_ID, msg.message_id, msg.chat.id)
+    else:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
+        # Сохраняем ID сообщения для администратора
+        save_message_id(ADMIN_ID, msg.message_id, msg.chat.id)
 
 # ========== ХЕНДЛЕРЫ ==========
 @dp.message(CommandStart())
@@ -298,7 +377,7 @@ async def start_voting_process(callback: types.CallbackQuery, state: FSMContext)
             InlineKeyboardButton(text="📢 2-й канал", url=f"https://t.me/genesis_bryansk")
         )
         builder.add(InlineKeyboardButton(text="✅ Подписался на оба", callback_data="check_sub"))
-        builder.adjust(2, 1)  # ← ВАЖНО: эта строка должна быть ВНУТРИ блока if
+        builder.adjust(2, 1)
         
         msg = await callback.message.answer(
             f"❗️ Для участия подпишись на <b>оба канала</b>:\n"
@@ -309,10 +388,10 @@ async def start_voting_process(callback: types.CallbackQuery, state: FSMContext)
             parse_mode="HTML"
         )
         save_message_id(user_id, msg.message_id, msg.chat.id)
-        await state.set_state(VotingStates.checking_subscription)  # ← Эта строка тоже ВНУТРИ if
-        return  # ← Этот return ВНУТРИ if
+        await state.set_state(VotingStates.checking_subscription)
+        return
     
-    # Если подписан на оба - начинаем голосование (этот блок с ОТДЕЛЬНЫМ отступом)
+    # Если подписан на оба - начинаем голосование
     conn = get_db_connection()
     cursor = conn.execute('SELECT COUNT(*) FROM votes WHERE user_id = ?', (user_id,))
     answered_count = cursor.fetchone()[0]
@@ -405,28 +484,31 @@ async def skip_vote(callback: types.CallbackQuery, state: FSMContext):
 async def admin_results(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
-        
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    text = "📊 <b>ТОП ОТВЕТОВ</b>\n\n"
     
-    for nom in NOMINATIONS:
-        text += f"🔸 <b>{nom['title']}</b>\n"
-        cursor.execute('''
-            SELECT answer_text, COUNT(*) as cnt 
-            FROM votes 
-            WHERE nomination_id = ? AND answer_text != 'ПРОПУЩЕНО'
-            GROUP BY LOWER(TRIM(answer_text)) 
-            ORDER BY cnt DESC LIMIT 150
-        ''', (nom['id'],))
-        
-        rows = cursor.fetchall()
-        for ans, cnt in rows:
-            text += f"▫️ {ans}: {cnt}\n"
-        text += "\n"
+    # Удаляем старые сообщения администратора
+    await delete_old_messages(ADMIN_ID)
     
-    await message.answer(text[:4000], parse_mode="HTML")
-    conn.close()
+    # Показываем первую страницу результатов
+    await show_results_page(message.chat.id, page=0)
+
+@dp.callback_query(F.data.startswith("results_page:"))
+async def handle_results_navigation(callback: types.CallbackQuery):
+    """Обрабатывает нажатие кнопок навигации в результатах"""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только для администратора", show_alert=True)
+        return
+    
+    # Извлекаем номер страницы из callback_data
+    page = int(callback.data.split(":")[1])
+    
+    # Редактируем текущее сообщение
+    await show_results_page(
+        chat_id=callback.message.chat.id,
+        page=page,
+        edit_message_id=callback.message.message_id
+    )
+    
+    await callback.answer()
 
 @dp.message(Command("export"))
 async def admin_export(message: types.Message):
@@ -534,8 +616,6 @@ async def admin_reset_all(message: types.Message):
     conn.close()
     await message.answer("🔄 Сброшены состояния ВСЕХ пользователей")
 
-
-
 # ========== АВТОМАТИЧЕСКАЯ ОЧИСТКА (РАЗ В ДЕНЬ) ==========
 async def daily_cleanup():
     """Автоматическая очистка - только удаление старых сообщений"""
@@ -550,7 +630,6 @@ async def daily_cleanup():
     finally:
         conn.close()
 
-
 async def schedule_daily_cleanup():
     """Планировщик очистки - проверяет каждый час"""
     while True:
@@ -561,7 +640,6 @@ async def schedule_daily_cleanup():
             await daily_cleanup()
             await asyncio.sleep(60)  # Ждём минуту
         await asyncio.sleep(3600)  # Проверяем каждый час
-
 
 # ========== ЗАПУСК ==========
 async def main():
