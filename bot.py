@@ -12,8 +12,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
-from aiogram.filters import Command, CommandStart
+from aiogram.types import FSInputFile
+from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== КОНФИГУРАЦИЯ ПУТЕЙ ==========
@@ -166,15 +166,12 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
     nomination = NOMINATIONS[current_index]
     builder = InlineKeyboardBuilder()
     
-    # ✅ КОРОТКИЕ callback_data (max 64 символа)
+    # ✅ 100% builder.button() синтаксис
     for i, finalist in enumerate(nomination["finalists"], 1):
-        builder.add(InlineKeyboardButton(
-            text=f"{i}. {finalist}", 
-            callback_data=f"v{nomination['id']}:{i}"
-        ))
+        builder.button(text=f"{i}. {finalist}", callback_data=f"v{nomination['id']}:{i}")
     
-    builder.add(InlineKeyboardButton(text="✏️ Свой", callback_data=f"c{nomination['id']}"))
-    builder.add(InlineKeyboardButton(text="➡️ Пропуск", callback_data=f"s{nomination['id']}"))
+    builder.button(text="✏️ Свой", callback_data=f"c{nomination['id']}")
+    builder.button(text="➡️ Пропуск", callback_data=f"s{nomination['id']}")
     builder.adjust(2)
     
     text = f"<b>🏆 {nomination['title']}</b>\n\n👥 <b>Выберите финалиста:</b>\n📊 {current_index + 1}/10"
@@ -219,9 +216,9 @@ async def show_final_results_page(chat_id: int, page: int = 0, edit_message_id: 
     
     builder = InlineKeyboardBuilder()
     if page > 0:
-        builder.add(InlineKeyboardButton("◀️ Назад", callback_data=f"fr:{page - 1}"))
+        builder.button(text="◀️ Назад", callback_data=f"fr:{page - 1}")
     if page < len(NOMINATIONS) - 1:
-       builder.button(text="Вперед ▶️", callback_data=f"fr:{page + 1}")
+        builder.button(text="Вперед ▶️", callback_data=f"fr:{page + 1}")
     builder.adjust(2)
     
     if edit_message_id:
@@ -245,7 +242,7 @@ async def cmd_start(message: types.Message):
     if user_id == ADMIN_ID:
         builder.button(text="📊 Результаты", callback_data="final_results")
         builder.button(text="📁 Экспорт", callback_data="admin_export")
-        builder.adjust(2)  # 2 кнопки в ряд
+        builder.adjust(2)
     
     await message.answer(
         "🎉 <b>ФИНАЛЬНОЕ ГОЛОСОВАНИЕ «Люди любят»</b>\n\n🏆 Выберите победителей!", 
@@ -262,10 +259,11 @@ async def start_final_voting(callback: types.CallbackQuery, state: FSMContext):
     if not await check_subscription(user_id):
         builder = InlineKeyboardBuilder()
         builder.row(
-            InlineKeyboardButton("📢 @new_people32", url="https://t.me/new_people32"),
-            InlineKeyboardButton("📢 @genesis_bryansk", url="https://t.me/genesis_bryansk")
+            InlineKeyboardButton(text="📢 @new_people32", url="https://t.me/new_people32"),
+            InlineKeyboardButton(text="📢 @genesis_bryansk", url="https://t.me/genesis_bryansk")
         )
-        builder.add(InlineKeyboardButton("✅ Подписался", callback_data="check_sub"))
+        builder.button(text="✅ Подписался", callback_data="check_sub")
+        builder.adjust(2)
         
         await callback.message.answer(
             "❗️ Подпишись на <b>оба канала</b>:",
@@ -410,13 +408,8 @@ async def admin_reset_all(message: types.Message):
     )
 
 @dp.message(Command("results"))
-async def admin_results(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    await delete_old_messages(ADMIN_ID)
-    await show_final_results_page(message.chat.id, 0)
-
 @dp.message(Command("finalresults"))
-async def admin_final_results(message: types.Message):
+async def admin_results(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
     await delete_old_messages(ADMIN_ID)
     await show_final_results_page(message.chat.id, 0)
@@ -483,10 +476,11 @@ async def admin_test(message: types.Message, state: FSMContext):
     else:
         builder = InlineKeyboardBuilder()
         builder.row(
-            InlineKeyboardButton("📢 @new_people32", url="https://t.me/new_people32"),
-            InlineKeyboardButton("📢 @genesis_bryansk", url="https://t.me/genesis_bryansk")
+            InlineKeyboardButton(text="📢 @new_people32", url="https://t.me/new_people32"),
+            InlineKeyboardButton(text="📢 @genesis_bryansk", url="https://t.me/genesis_bryansk")
         )
-        builder.add(InlineKeyboardButton("✅ Подписался", callback_data="check_sub"))
+        builder.button(text="✅ Подписался", callback_data="check_sub")
+        builder.adjust(2)
         await message.answer("❗️ Подпишись на каналы:", reply_markup=builder.as_markup(), parse_mode="HTML")
         await state.set_state(FinalVotingStates.checking_subscription)
 
