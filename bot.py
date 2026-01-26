@@ -221,7 +221,7 @@ async def show_final_results_page(chat_id: int, page: int = 0, edit_message_id: 
     if page > 0:
         builder.add(InlineKeyboardButton("◀️ Назад", callback_data=f"fr:{page - 1}"))
     if page < len(NOMINATIONS) - 1:
-        builder.add(InlineKeyboardButton("Вперед ▶️", callback_data=f"fr:{page + 1}"))
+       builder.button(text="Вперед ▶️", callback_data=f"fr:{page + 1}")
     builder.adjust(2)
     
     if edit_message_id:
