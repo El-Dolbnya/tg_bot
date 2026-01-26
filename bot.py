@@ -19,9 +19,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ========== КОНФИГУРАЦИЯ ПУТЕЙ ==========
 VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
 
-# ✅ ИСПОЛЬЗУЕМ ТОТ ЖЕ ФАЙЛ БД - ВСЕ ДАННЫЕ СОХРАНЯТСЯ!
-DB_PATH = os.path.join(VOLUME_PATH, 'voting.db')  # ← ОРИГИНАЛЬНОЕ ИМЯ!
-
+# ✅ ТОТ ЖЕ ФАЙЛ БД - ВСЕ ДАННЫЕ СОХРАНЯЮТСЯ!
+DB_PATH = os.path.join(VOLUME_PATH, 'voting.db')
 JSON_EXPORT_PATH = os.path.join(VOLUME_PATH, 'exports')
 os.makedirs(JSON_EXPORT_PATH, exist_ok=True)
 
@@ -30,7 +29,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 print("=== DEBUG ENV ===")
 print(f"BOT_TOKEN length: {len(os.getenv('BOT_TOKEN', 'NOT_FOUND'))}")
 print(f"DB_PATH: {DB_PATH}")
-print(f"All keys: {list(os.environ.keys())}")
 print("=== END DEBUG ===")
 
 if not BOT_TOKEN:
@@ -122,7 +120,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # СТАРЫЕ ТАБЛИЦЫ (СОХРАНЯЮТСЯ!)
+    # ✅ СТАРЫЕ ТАБЛИЦЫ (СОХРАНЯЮТСЯ!)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -183,7 +181,7 @@ def init_db():
 
     conn.commit()
     conn.close()
-    logger.info("✅ БД инициализирована (все старые данные сохранены)")
+    logger.info("✅ БД готова (все старые данные сохранены)")
 
 init_db()
 
@@ -194,9 +192,7 @@ class FinalVotingStates(StatesGroup):
     custom_proposal = State()
     finished = State()
 
-# Остальной код идентичен предыдущему...
-# (функции save_message_id, delete_old_messages, check_subscription, ask_next_nomination, show_final_results_page)
-
+# ========== ФУНКЦИИ ==========
 def save_message_id(user_id: int, message_id: int, chat_id: int):
     conn = get_db_connection()
     try:
@@ -246,7 +242,7 @@ async def ask_next_nomination(message: types.Message, state: FSMContext, user_id
         await message.answer(
             "🎉 <b>Спасибо за голосование!</b>\n\n"
             "✅ Ваши голоса учтены!\n\n"
-            "<i>Изменить: <code>/finalrevote</code></i>",
+            "<i>Изменить: <code>/finalrevote</code> | <code>/revote</code></i>",
             parse_mode="HTML"
         )
         await state.set_state(FinalVotingStates.finished)
@@ -327,7 +323,7 @@ async def show_final_results_page(chat_id: int, page: int = 0, edit_message_id: 
         msg = await bot.send_message(chat_id, text, reply_markup=builder.as_markup(), parse_mode="HTML")
         save_message_id(ADMIN_ID, msg.message_id, msg.chat.id)
 
-# ========== ХЕНДЛЕРЫ (сокращённая версия) ==========
+# ========== ХЕНДЛЕРЫ ==========
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -335,25 +331,343 @@ async def cmd_start(message: types.Message):
     
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton("🚀 Финальное голосование", callback_data="start_final_voting"))
-    builder.row(
-        InlineKeyboardButton("📊 Результаты (админ)", callback_data="admin_results"),
-        InlineKeyboardButton("📁 Экспорт (админ)", callback_data="admin_export")
-    )
+    
+    if user_id == ADMIN_ID:
+        builder.row(
+            InlineKeyboardButton("📊 Результаты", callback_data="admin_final_results"),
+            InlineKeyboardButton("📁 Экспорт", callback_data="admin_final_export")
+        )
     
     await message.answer(
         "🎉 <b>ФИНАЛЬНОЕ ГОЛОСОВАНИЕ «Люди любят»</b>\n\n🏆 Выберите победителей!",
         reply_markup=builder.as_markup(), parse_mode="HTML"
     )
 
-# ... (все остальные хендлеры как в предыдущем коде - vote:, custom:, skip:, admin команды)
+@dp.callback_query(F.data == "start_final_voting")
+async def start_final_voting(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    user_id = callback.from_user.id
+    await delete_old_messages(user_id)
+    
+    if not await check_subscription(user_id):
+        builder = InlineKeyboardBuilder()
+        builder.add(
+            InlineKeyboardButton(text="📢 1-й канал", url="https://t.me/new_people32"),
+            InlineKeyboardButton(text="📢 2-й канал", url="https://t.me/genesis_bryansk")
+        )
+        builder.add(InlineKeyboardButton(text="✅ Подписался", callback_data="check_final_sub"))
+        builder.adjust(2, 1)
+        
+        msg = await callback.message.answer(
+            "❗️ Подпишись на <b>оба канала</b>:\n• @new_people32\n• @genesis_bryansk",
+            reply_markup=builder.as_markup(), parse_mode="HTML"
+        )
+        save_message_id(user_id, msg.message_id, msg.chat.id)
+        await state.set_state(FinalVotingStates.checking_subscription)
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.execute('SELECT COUNT(*) FROM final_votes WHERE user_id = ?', (user_id,))
+    answered_count = cursor.fetchone()[0]
+    conn.close()
+    
+    await ask_next_nomination(callback.message, state, user_id, answered_count)
 
-# ========== АДМИН КОМАНДЫ ==========
+@dp.callback_query(F.data == "check_final_sub", FinalVotingStates.checking_subscription)
+async def check_final_sub(callback: types.CallbackQuery, state: FSMContext):
+    if await check_subscription(callback.from_user.id):
+        await callback.message.delete()
+        await callback.answer("✅ Отлично!")
+        await ask_next_nomination(callback.message, state, callback.from_user.id, 0)
+    else:
+        await callback.answer("❌ Подпишись на оба!", show_alert=True)
+
+@dp.callback_query(F.data.startswith("vote:"), FinalVotingStates.voting_process)
+async def process_finalist_vote(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("✅ Голос учтён!")
+    user_id = callback.from_user.id
+    
+    data = callback.data.split(":")
+    nomination_id = data[1]
+    finalist_name = data[2]
+    
+    nomination = next((n for n in NOMINATIONS if n["id"] == nomination_id), None)
+    if not nomination:
+        return
+    
+    conn = get_db_connection()
+    conn.execute('''
+        INSERT OR REPLACE INTO final_votes (user_id, nomination_id, nomination_title, finalist_name, is_custom)
+        VALUES (?, ?, ?, ?, 0)
+    ''', (user_id, nomination_id, nomination["title"], finalist_name, 0))
+    conn.commit()
+    conn.close()
+    
+    state_data = await state.get_data()
+    current_index = state_data.get("current_index", 0)
+    await delete_old_messages(user_id)
+    await ask_next_nomination(callback.message, state, user_id, current_index + 1)
+
+@dp.callback_query(F.data.startswith("custom:"), FinalVotingStates.voting_process)
+async def request_custom_proposal(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = callback.data.split(":")
+    nomination_id = data[1]
+    
+    nomination = next((n for n in NOMINATIONS if n["id"] == nomination_id), None)
+    text = f"<b>{nomination['title']}</b>\n\n✏️ Напишите своего кандидата:"
+    
+    await callback.message.answer(text, parse_mode="HTML")
+    await state.update_data(nomination_id=nomination_id, nomination_title=nomination["title"])
+    await state.set_state(FinalVotingStates.custom_proposal)
+
+@dp.message(FinalVotingStates.custom_proposal)
+async def save_custom_proposal(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if len(message.text) > 200:
+        await message.answer("⚠️ До 200 символов.")
+        return
+    
+    data = await state.get_data()
+    nomination_id = data.get("nomination_id")
+    nomination_title = data.get("nomination_title")
+    
+    conn = get_db_connection()
+    conn.execute('''
+        INSERT INTO custom_proposals (user_id, nomination_id, nomination_title, proposal_text)
+        VALUES (?, ?, ?, ?)
+    ''', (user_id, nomination_id, nomination_title, message.text))
+    
+    conn.execute('''
+        INSERT OR REPLACE INTO final_votes (user_id, nomination_id, nomination_title, finalist_name, is_custom, custom_text)
+        VALUES (?, ?, ?, ?, 1, ?)
+    ''', (user_id, nomination_id, nomination_title, "СВОЙ", 1, message.text))
+    conn.commit()
+    conn.close()
+    
+    current_index = data.get("current_index", 0)
+    await delete_old_messages(user_id)
+    await ask_next_nomination(message, state, user_id, current_index + 1)
+
+@dp.callback_query(F.data.startswith("skip:"), FinalVotingStates.voting_process)
+async def skip_final_vote(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("➡️ Пропущено")
+    user_id = callback.from_user.id
+    
+    nomination_id = callback.data.split(":")[1]
+    nomination = next((n for n in NOMINATIONS if n["id"] == nomination_id), None)
+    
+    conn = get_db_connection()
+    conn.execute('''
+        INSERT OR REPLACE INTO final_votes (user_id, nomination_id, nomination_title, finalist_name)
+        VALUES (?, ?, ?, ?)
+    ''', (user_id, nomination_id, nomination["title"], "ПРОПУЩЕНО"))
+    conn.commit()
+    conn.close()
+    
+    state_data = await state.get_data()
+    current_index = state_data.get("current_index", 0)
+    await delete_old_messages(user_id)
+    await ask_next_nomination(callback.message, state, user_id, current_index + 1)
+
+# ========== ✅ СТАРЫЕ АДМИН КОМАНДЫ (РАБОТАЮТ!) ==========
+@dp.message(Command("results"))
+async def admin_results(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    await delete_old_messages(ADMIN_ID)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT answer_text, COUNT(*) as cnt FROM votes WHERE answer_text != "ПРОПУЩЕНО" GROUP BY LOWER(TRIM(answer_text)) ORDER BY cnt DESC LIMIT 10')
+    top_votes = cursor.fetchall()
+    
+    text = "📊 <b>ТОП ПРЕДЛОЖЕНИЙ (1 ФАЗА)</b>\n\n"
+    for ans, cnt in top_votes:
+        text += f"▫️ {ans}: {cnt}\n"
+    
+    conn.close()
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("export"))
+async def admin_export(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    export_data = {"votes": []}
+    
+    cursor.execute('SELECT v.nomination_title, v.answer_text, u.username FROM votes v JOIN users u ON v.user_id = u.user_id')
+    for row in cursor.fetchall():
+        export_data["votes"].append({
+            "nomination": row[0],
+            "answer": row[1],
+            "user": row[2]
+        })
+    
+    filename = f"export_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    filepath = os.path.join(JSON_EXPORT_PATH, filename)
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(export_data, f, ensure_ascii=False, indent=2)
+        
+    await message.answer_document(FSInputFile(filepath), caption="📁 Экспорт 1 фазы")
+    conn.close()
+
+@dp.message(Command("testvote"))
+async def admin_test(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+        
+    user_id = message.from_user.id
+    conn = get_db_connection()
+    conn.execute('DELETE FROM final_votes WHERE user_id = ?', (user_id,))
+    conn.execute('DELETE FROM votes WHERE user_id = ?', (user_id,))
+    conn.execute('UPDATE users SET is_finished = 0 WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+    
+    await state.clear()
+    await message.answer("🔄 Тест сброшен")
+
+@dp.message(Command("cleanup"))
+async def admin_cleanup(message: types.Message):
+    if message.from_user.id != ADMIN_ID: 
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    deleted = cursor.execute('DELETE FROM bot_messages WHERE created_at < datetime("now", "-1 day")').rowcount
+    conn.commit()
+    
+    cursor.execute('SELECT COUNT(*) FROM votes')
+    votes_count = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) FROM final_votes')
+    final_votes_count = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) FROM users')
+    users_count = cursor.fetchone()[0]
+    
+    conn.close()
+    await message.answer(
+        f"🧹 <b>Очистка завершена!</b>\n\n"
+        f"🗑️ Удалено сообщений: {deleted}\n"
+        f"✅ Голосов 1 фазы: {votes_count}\n"
+        f"✅ Финальных голосов: {final_votes_count}\n"
+        f"👥 Пользователей: {users_count}",
+        parse_mode="HTML"
+    )
+
+# ========== ✅ НОВЫЕ АДМИН КОМАНДЫ ==========
 @dp.message(Command("finalresults"))
 async def admin_final_results(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
+    if message.from_user.id != ADMIN_ID:
+        return
     await delete_old_messages(ADMIN_ID)
     await show_final_results_page(message.chat.id, 0)
 
 @dp.message(Command("finalexport"))
 async def admin_final_export(message: types.Message):
-    if message.from_user.id
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    export_data = {
+        "phase1_votes": [],
+        "final_votes": [],
+        "custom_proposals": []
+    }
+    
+    # 1 фаза
+    cursor.execute('SELECT v.nomination_title, v.answer_text, u.username FROM votes v JOIN users u ON v.user_id = u.user_id')
+    for row in cursor.fetchall():
+        export_data["phase1_votes"].append({
+            "nomination": row[0],
+            "answer": row[1],
+            "user": row[2]
+        })
+    
+    # Финальные голоса
+    cursor.execute('SELECT nomination_title, finalist_name, is_custom, custom_text, username FROM final_votes v JOIN users u ON v.user_id = u.user_id')
+    for row in cursor.fetchall():
+        export_data["final_votes"].append({
+            "nomination": row[0],
+            "finalist": row[1],
+            "is_custom": bool(row[2]),
+            "custom_text": row[3],
+            "user": row[4]
+        })
+    
+    # Кастомные предложения
+    cursor.execute('SELECT nomination_title, proposal_text, username FROM custom_proposals p JOIN users u ON p.user_id = u.user_id')
+    for row in cursor.fetchall():
+        export_data["custom_proposals"].append({
+            "nomination": row[0],
+            "proposal": row[1],
+            "user": row[2]
+        })
+    
+    filename = f"full_export_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    filepath = os.path.join(JSON_EXPORT_PATH, filename)
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(export_data, f, ensure_ascii=False, indent=2)
+        
+    await message.answer_document(FSInputFile(filepath), caption="📁 Полный экспорт")
+    conn.close()
+
+@dp.message(Command("finalrevote"))
+async def user_final_revote(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM final_votes WHERE user_id = ?', (user_id,))
+    cursor.execute('DELETE FROM custom_proposals WHERE user_id = ?', (user_id,))
+    cursor.execute('UPDATE users SET is_finished = 0 WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+    
+    await delete_old_messages(user_id)
+    await state.clear()
+    
+    await message.answer("🔄 <b>Финальное переголосование!</b>\n✅ /start", parse_mode="HTML")
+
+@dp.message(Command("resetall"))
+async def admin_reset_all(message: types.Message):
+    if message.from_user.id != ADMIN_ID: return
+    conn = get_db_connection()
+    conn.execute('UPDATE users SET is_finished = 0')
+    conn.commit()
+    conn.close()
+    await message.answer("🔄 Сброшены состояния ВСЕХ")
+
+# ========== НАВИГАЦИЯ ПО РЕЗУЛЬТАТАМ ==========
+@dp.callback_query(F.data.startswith("final_results:"))
+async def handle_final_results_nav(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ Только админ", show_alert=True)
+        return
+    page = int(callback.data.split(":")[1])
+    await show_final_results_page(callback.message.chat.id, page, callback.message.message_id)
+    await callback.answer()
+
+# ========== ЗАПУСК ==========
+async def main():
+    retry_count = 0
+    while True:
+        try:
+            logger.info("🚀 Бот запускается...")
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Бот запущен")
+            await dp.start_polling(bot)
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"❌ Ошибка (попытка {retry_count}): {e}")
+            await asyncio.sleep(5)
+
+if __name__ == "__main__":
+    asyncio.run(main())
