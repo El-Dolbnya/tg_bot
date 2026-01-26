@@ -379,6 +379,36 @@ async def skip_final_vote(callback: types.CallbackQuery, state: FSMContext):
     await ask_next_nomination(callback.message, state, user_id, current_index + 1)
 
 # ========== АДМИН КОМАНДЫ ==========
+@dp.message(Command("resetall"), F.from_user.id == ADMIN_ID)
+async def admin_reset_all(message: types.Message):
+    """СБРОС ВСЕХ пользователей - они начнут с 1-й номинации"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. СБРАСЫВАЕМ состояния (is_finished = 0)
+    cursor.execute('UPDATE users SET is_finished = 0')
+    reset_count = cursor.rowcount
+    
+    # 2. Удаляем ВСЕ финальные голоса
+    cursor.execute('DELETE FROM final_votes')
+    deleted_votes = cursor.rowcount
+    
+    # 3. Удаляем кастомные предложения
+    cursor.execute('DELETE FROM custom_proposals')
+    deleted_proposals = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    await message.answer(
+        f"🔄 <b>ГЛОБАЛЬНЫЙ СБРОС!</b>\n\n"
+        f"👥 Пользователей сброшено: <b>{reset_count}</b>\n"
+        f"🗑️ Финальных голосов удалено: <b>{deleted_votes}</b>\n"
+        f"✏️ Предложений удалено: <b>{deleted_proposals}</b>\n\n"
+        f"✅ <i>Все начнут голосование с 1-й номинации!</i>",
+        parse_mode="HTML"
+    )
+
 @dp.message(Command("results"))
 async def admin_results(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
