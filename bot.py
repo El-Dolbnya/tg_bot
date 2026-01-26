@@ -234,23 +234,23 @@ async def show_final_results_page(chat_id: int, page: int = 0, edit_message_id: 
         await bot.send_message(chat_id, text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 # ========== ХЕНДЛЕРЫ ==========
-@dp.message(CommandStart())
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     await delete_old_messages(user_id)
     
     builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton("🚀 Начать голосование", callback_data="start_voting"))
+    builder.button(text="🚀 Начать голосование", callback_data="start_voting")
     
     if user_id == ADMIN_ID:
-        builder.row(
-            InlineKeyboardButton("📊 Результаты", callback_data="final_results"),
-            InlineKeyboardButton("📁 Экспорт", callback_data="admin_export")
-        )
+        builder.button(text="📊 Результаты", callback_data="final_results")
+        builder.button(text="📁 Экспорт", callback_data="admin_export")
+        builder.adjust(2)  # 2 кнопки в ряд
     
     await message.answer(
-        "🎉 <b>ФИНАЛЬНОЕ ГОЛОСОВАНИЕ «Люди любят»</b>\n\n🏆 Выберите победителей!",
-        reply_markup=builder.as_markup(), parse_mode="HTML"
+        "🎉 <b>ФИНАЛЬНОЕ ГОЛОСОВАНИЕ «Люди любят»</b>\n\n🏆 Выберите победителей!", 
+        reply_markup=builder.as_markup(), 
+        parse_mode="HTML"
     )
 
 @dp.callback_query(F.data == "start_voting")
