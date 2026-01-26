@@ -150,18 +150,25 @@ async def check_subscription(user_id: int) -> bool:
             return False
     return True
 
-async def ask_next_nomination(message: types.Message, state: FSMContext, user_id: int, current_index: int):
+async def update_user_info(user_id: int, username: Optional[str], first_name: Optional[str]):
+    """Обновляем информацию о пользователе в базе"""
     conn = get_db_connection()
     try:
-        # Обновляем информацию о пользователе
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO users (user_id, username, first_name, last_active, is_finished) 
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, 0)
-        ''', (user_id, message.from_user.username, message.from_user.first_name))
+        ''', (user_id, username, first_name))
         conn.commit()
     finally:
         conn.close()
+
+async def ask_next_nomination(message: types.Message, state: FSMContext, user_id: int, current_index: int):
+    # Обновляем информацию о пользователе
+    if hasattr(message, 'from_user') and message.from_user:
+        username = message.from_user.username
+        first_name = message.from_user.first_name
+        await update_user_info(user_id, username, first_name)
     
     if current_index >= len(NOMINATIONS):
         conn = get_db_connection()
@@ -263,17 +270,21 @@ async def cmd_start(message: types.Message):
         builder.button(text="📁 Экспорт", callback_data="admin_export")
         builder.adjust(2)
     
-    await message.answer(
+    msg = await message.answer(
         "🎉 <b>ФИНАЛЬНОЕ ГОЛОСОВАНИЕ «Люди любят»</b>\n\n🏆 Выберите победителей!", 
         reply_markup=builder.as_markup(), 
         parse_mode="HTML"
     )
+    save_message_id(user_id, msg.message_id, msg.chat.id)
 
 @dp.callback_query(F.data == "start_voting")
 async def start_final_voting(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = callback.from_user.id
     await delete_old_messages(user_id)
+    
+    # Обновляем информацию о пользователе
+    await update_user_info(user_id, callback.from_user.username, callback.from_user.first_name)
     
     if not await check_subscription(user_id):
         builder = InlineKeyboardBuilder()
@@ -291,10 +302,14 @@ async def start_final_voting(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(FinalVotingStates.checking_subscription)
         return
     
+    # Получаем количество уже отвеченных номинаций
     conn = get_db_connection()
-    cursor = conn.execute('SELECT COUNT(*) FROM final_votes WHERE user_id = ?', (user_id,))
-    answered_count = cursor.fetchone()[0] if cursor.fetchone() else 0
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM final_votes WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
     conn.close()
+    
+    answered_count = result[0] if result else 0
     
     await ask_next_nomination(callback.message, state, user_id, answered_count)
 
@@ -313,7 +328,7 @@ async def process_finalist_vote(callback: types.CallbackQuery, state: FSMContext
     await callback.answer("✅ Голос учтён!")
     user_id = callback.from_user.id
     
-    # Исправляем обработку callback_data
+    # Обработка callback_data: v1:1 → nomination_id=1, choice_num=1
     parts = callback.data.split(":")
     if len(parts) != 2:
         return
@@ -351,10 +366,11 @@ async def request_custom_proposal(callback: types.CallbackQuery, state: FSMConte
     )
     save_message_id(callback.from_user.id, msg.message_id, msg.chat.id)
     
+    state_data = await state.get_data()
     await state.update_data(
         nomination_id=nomination_id, 
         nomination_title=nomination["title"],
-        current_index=state.get_data().get("current_index", 0)
+        current_index=state_data.get("current_index", 0)
     )
     await state.set_state(FinalVotingStates.custom_proposal)
 
@@ -604,13 +620,20 @@ async def admin_cleanup(message: types.Message):
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    deleted = cursor.execute('DELETE FROM bot_messages WHERE created_at < datetime("now", "-1 day")').rowcount
+    
+    cursor.execute('DELETE FROM bot_messages WHERE created_at < datetime("now", "-1 day")')
+    deleted = cursor.rowcount
+    
     conn.commit()
     
     cursor.execute('SELECT COUNT(*) FROM final_votes')
-    final_votes = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    final_votes = result[0] if result else 0
+    
     cursor.execute('SELECT COUNT(*) FROM users')
-    users = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    users = result[0] if result else 0
+    
     conn.close()
     
     await message.answer(
