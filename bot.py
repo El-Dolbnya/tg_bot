@@ -522,15 +522,45 @@ async def admin_test(message: types.Message, state: FSMContext):
         return
         
     user_id = message.from_user.id
+    
+    # ✅ Удаляем ВСЕ данные админа
     conn = get_db_connection()
     conn.execute('DELETE FROM final_votes WHERE user_id = ?', (user_id,))
     conn.execute('DELETE FROM votes WHERE user_id = ?', (user_id,))
+    conn.execute('DELETE FROM custom_proposals WHERE user_id = ?', (user_id,))
     conn.execute('UPDATE users SET is_finished = 0 WHERE user_id = ?', (user_id,))
     conn.commit()
     conn.close()
     
+    # ✅ Очищаем состояние
     await state.clear()
-    await message.answer("🔄 Тест сброшен")
+    await delete_old_messages(user_id)
+    
+    # ✅ НАЧИНАЕМ ГОЛОСОВАНИЕ С НАЧАЛА!
+    await message.answer(
+        "🔄 <b>✅ Тест активирован!</b>\n\n"
+        "🚀 Голосование начато с первой номинации\n"
+        "📋 Все данные сброшены",
+        parse_mode="HTML"
+    )
+    
+    # ✅ Автоматически проверяем подписку и начинаем
+    if await check_subscription(user_id):
+        await ask_next_nomination(message, state, user_id, 0)
+    else:
+        builder = InlineKeyboardBuilder()
+        builder.add(
+            InlineKeyboardButton("📢 1-й канал", url="https://t.me/new_people32"),
+            InlineKeyboardButton("📢 2-й канал", url="https://t.me/genesis_bryansk")
+        )
+        builder.add(InlineKeyboardButton("✅ Подписался", callback_data="check_final_sub"))
+        builder.adjust(2, 1)
+        
+        await message.answer(
+            "❗️ Для теста подпишись на каналы:",
+            reply_markup=builder.as_markup(), parse_mode="HTML"
+        )
+        await state.set_state(FinalVotingStates.checking_subscription)
 
 @dp.message(Command("cleanup"))
 async def admin_cleanup(message: types.Message):
