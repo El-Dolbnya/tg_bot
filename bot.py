@@ -560,39 +560,33 @@ async def admin_cleanup(message: types.Message):
         parse_mode="HTML"
     )
 
-# ========== ✅ НОВЫЕ АДМИН КОМАНДЫ ==========
-@dp.message(Command("finalresults"))
-async def admin_final_results(message: types.Message):
+# ✅ ИСПРАВЛЕННЫЕ СТАРЫЕ КОМАНДЫ - теперь показывают ФИНАЛЬНЫЕ результаты!
+
+@dp.message(Command("results"))
+async def admin_results(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
+    
     await delete_old_messages(ADMIN_ID)
-    await show_final_results_page(message.chat.id, 0)
+    await show_final_results_page(message.chat.id, page=0)  # ← Теперь финальные!
+    # Было: показ старых votes → Стало: финальные final_votes
 
-@dp.message(Command("finalexport"))
-async def admin_final_export(message: types.Message):
+@dp.message(Command("export"))
+async def admin_export(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
 
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    export_data = {
-        "phase1_votes": [],
-        "final_votes": [],
-        "custom_proposals": []
-    }
+    # ✅ ТЕПЕРЬ ЭКСПОРТИРУЕТ ФИНАЛЬНЫЕ ГОЛОСА!
+    export_data = {"final_votes": []}
     
-    # 1 фаза
-    cursor.execute('SELECT v.nomination_title, v.answer_text, u.username FROM votes v JOIN users u ON v.user_id = u.user_id')
-    for row in cursor.fetchall():
-        export_data["phase1_votes"].append({
-            "nomination": row[0],
-            "answer": row[1],
-            "user": row[2]
-        })
-    
-    # Финальные голоса
-    cursor.execute('SELECT nomination_title, finalist_name, is_custom, custom_text, username FROM final_votes v JOIN users u ON v.user_id = u.user_id')
+    cursor.execute('''
+        SELECT nomination_title, finalist_name, is_custom, custom_text, username 
+        FROM final_votes v 
+        LEFT JOIN users u ON v.user_id = u.user_id
+    ''')
     for row in cursor.fetchall():
         export_data["final_votes"].append({
             "nomination": row[0],
@@ -602,48 +596,14 @@ async def admin_final_export(message: types.Message):
             "user": row[4]
         })
     
-    # Кастомные предложения
-    cursor.execute('SELECT nomination_title, proposal_text, username FROM custom_proposals p JOIN users u ON p.user_id = u.user_id')
-    for row in cursor.fetchall():
-        export_data["custom_proposals"].append({
-            "nomination": row[0],
-            "proposal": row[1],
-            "user": row[2]
-        })
-    
-    filename = f"full_export_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    filename = f"final_export_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
     filepath = os.path.join(JSON_EXPORT_PATH, filename)
     
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(export_data, f, ensure_ascii=False, indent=2)
         
-    await message.answer_document(FSInputFile(filepath), caption="📁 Полный экспорт")
+    await message.answer_document(FSInputFile(filepath), caption="📁 Экспорт финальных голосов")
     conn.close()
-
-@dp.message(Command("finalrevote"))
-async def user_final_revote(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM final_votes WHERE user_id = ?', (user_id,))
-    cursor.execute('DELETE FROM custom_proposals WHERE user_id = ?', (user_id,))
-    cursor.execute('UPDATE users SET is_finished = 0 WHERE user_id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-    
-    await delete_old_messages(user_id)
-    await state.clear()
-    
-    await message.answer("🔄 <b>Финальное переголосование!</b>\n✅ /start", parse_mode="HTML")
-
-@dp.message(Command("resetall"))
-async def admin_reset_all(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    conn = get_db_connection()
-    conn.execute('UPDATE users SET is_finished = 0')
-    conn.commit()
-    conn.close()
-    await message.answer("🔄 Сброшены состояния ВСЕХ")
 
 # ========== НАВИГАЦИЯ ПО РЕЗУЛЬТАТАМ ==========
 @dp.callback_query(F.data.startswith("final_results:"))
