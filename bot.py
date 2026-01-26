@@ -433,15 +433,19 @@ async def save_custom_proposal(message: types.Message, state: FSMContext):
     nomination_title = data.get("nomination_title")
     
     conn = get_db_connection()
+    
+    # ✅ КАСТОМНОЕ ПРЕДЛОЖЕНИЕ
     conn.execute('''
         INSERT INTO custom_proposals (user_id, nomination_id, nomination_title, proposal_text)
         VALUES (?, ?, ?, ?)
     ''', (user_id, nomination_id, nomination_title, message.text))
     
+    # ✅ ГОЛОС ЗА "СВОЙ" (6 параметров = 6 ?)
     conn.execute('''
         INSERT OR REPLACE INTO final_votes (user_id, nomination_id, nomination_title, finalist_name, is_custom, custom_text)
-        VALUES (?, ?, ?, ?, 1, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
     ''', (user_id, nomination_id, nomination_title, "СВОЙ", 1, message.text))
+    
     conn.commit()
     conn.close()
     
